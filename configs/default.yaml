@@ -1,0 +1,42 @@
+model:
+  model_id: Qwen/Qwen2-0.5B
+  dtype: bfloat16
+  load_in_4bit: false
+  load_in_8bit: false
+
+tokens:
+  num_tokens: 3
+  token_prefix: "<|pref_"
+  init_strategy: mean   # mean | random | clone_eos
+
+dataset:
+  path: data/train.jsonl
+  prompt_column: prompt
+  preference_label_column: preference_label
+  chosen_column: chosen
+  rejected_column: rejected   # set to null to disable contrastive loss
+  max_length: 2048
+
+training:
+  output_dir: outputs/run_01
+  num_epochs: 3
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 0.001
+  lr_scheduler: cosine
+  warmup_ratio: 0.1
+  eval_strategy: steps
+  eval_steps: 100
+  save_steps: 100
+  logging_steps: 10
+  contrastive_loss_weight: 0.0   # 0.0 disables the contrastive term
+  seed: 42
+  bf16: true
+  gradient_checkpointing: true
+  report_to: none   # set to "wandb" to enable Weights & Biases logging
+
+inference:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true

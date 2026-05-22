@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# HuggingFace cache
+.cache/
+
+# Training outputs and checkpoints
+outputs/
+runs/
+wandb/
+
+# Model weights and large binaries
+*.pt
+*.bin
+*.safetensors
+*.gguf
+
+# Dataset files (can be large)
+data/
+
+# IDE
+.DS_Store
+.idea/
+.vscode/

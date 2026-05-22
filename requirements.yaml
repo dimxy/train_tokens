@@ -1,0 +1,332 @@
+---
+# Machine-readable requirements for Qwen special-token preference trainer
+# Format: structured YAML suitable for parsing by tooling or LLM agents
+# Version: 1.0.0
+
+metadata:
+  name: qwen-preference-tokens
+  version: "1.0.0"
+  description: >
+    Python application that adds learnable special tokens to a Qwen language model,
+    trains those token embeddings on a preference dataset, and prepends them to user
+    inputs at inference time to steer model responses toward user-defined preferences.
+  approach: prompt-tuning  # freeze base model; only train new token embeddings
+
+# ─── Functional Requirements ──────────────────────────────────────────────────
+functional_requirements:
+
+  - id: FR-01
+    title: token_registration
+    description: >
+      Register N new special tokens (e.g. <|pref_0|> … <|pref_N-1|>) in the Qwen
+      tokenizer vocabulary and expand the model's embedding and lm_head matrices to
+      match, leaving all pre-existing weights unchanged.
+    inputs:
+      - qwen_model_id: str           # HuggingFace model identifier
+      - num_tokens: int              # how many preference tokens to add
+      - token_prefix: str            # naming prefix, e.g. "<|pref_"
+    outputs:
+      - updated_tokenizer: object
+      - model_with_expanded_vocab: object
+    acceptance_criteria:
+      - tokenizer.vocab_size increases by num_tokens
+      - new token ids are contiguous and do not collide with existing ids
+      - model.embed_tokens.weight shape[-1] is unchanged; shape[0] increases by num_tokens
+      - new token embeddings are initialised from the mean of existing embeddings
+
+  - id: FR-02
+    title: dataset_loading
+    description: >
+      Load a preference dataset that maps (user_input, preference_label) pairs to
+      preferred and rejected responses. Support HuggingFace datasets and local
+      JSONL files.
+    inputs:
+      - dataset_path: str            # HF dataset id or local path
+      - split: str                   # train / validation / test
+      - columns:
+          prompt: str                # column containing the user prompt
+          preference_label: str      # column containing the preference category id
+          chosen: str                # column containing the preferred response
+          rejected: str              # optional; column with dispreferred response
+    outputs:
+      - dataset: datasets.Dataset
+    acceptance_criteria:
+      - all specified columns are present after loading
+      - dataset length > 0
+      - preference_label values map to valid token ids
+
+  - id: FR-03
+    title: input_construction
+    description: >
+      For each training example, prepend the preference token(s) corresponding to
+      the example's preference_label to the user prompt before tokenization.
+    inputs:
+      - raw_prompt: str
+      - preference_label: int | str
+      - token_mapping: dict          # label -> list[token_id]
+    outputs:
+      - augmented_input_ids: list[int]
+    acceptance_criteria:
+      - augmented_input_ids starts with the preference token ids
+      - original prompt tokens follow immediately after
+      - total length does not exceed model max_position_embeddings
+
+  - id: FR-04
+    title: training
+    description: >
+      Train only the new token embeddings using a causal language-modelling loss on
+      the chosen responses, with the base model frozen. Optionally add a contrastive
+      loss term that pushes embeddings away from rejected-response representations.
+    inputs:
+      - model: transformers.PreTrainedModel
+      - tokenizer: transformers.PreTrainedTokenizer
+      - train_dataset: datasets.Dataset
+      - eval_dataset: datasets.Dataset
+      - hyperparameters: TrainingConfig
+    outputs:
+      - trained_token_embeddings: torch.Tensor  # shape [num_tokens, hidden_size]
+      - training_metrics: dict
+    acceptance_criteria:
+      - only parameters with requires_grad=True are updated (the new embeddings)
+      - eval loss is logged every eval_steps
+      - training can be resumed from a checkpoint
+      - training completes without OOM on a single A100-40 GB with batch_size=4
+
+  - id: FR-05
+    title: checkpoint_save_load
+    description: >
+      Save and load the trained preference token embeddings and the token-to-label
+      mapping independently from the base model weights.
+    inputs:
+      - save_dir: str
+    outputs:
+      - embeddings file: "{save_dir}/preference_embeddings.pt"
+      - config file:     "{save_dir}/token_config.json"
+    acceptance_criteria:
+      - saved artefacts are sufficient to reconstruct inference behaviour without
+        re-training
+      - loading works against any checkpoint of the same base model
+
+  - id: FR-06
+    title: inference
+    description: >
+      At inference time, accept a user preference label alongside the prompt,
+      prepend the corresponding trained token(s), and generate a response.
+    inputs:
+      - prompt: str
+      - preference_label: int | str
+      - generation_config: dict      # temperature, top_p, max_new_tokens, etc.
+    outputs:
+      - response: str
+    acceptance_criteria:
+      - response reflects the specified preference (validated by human eval or
+        automated preference classifier)
+      - latency overhead vs. baseline (no prefix tokens) < 5 %
+
+# ─── Technical Requirements ───────────────────────────────────────────────────
+technical_requirements:
+
+  - id: TR-01
+    title: language_and_runtime
+    spec:
+      language: Python
+      min_version: "3.10"
+
+  - id: TR-02
+    title: core_dependencies
+    spec:
+      - package: torch
+        min_version: "2.2.0"
+        notes: CUDA 12.x build preferred
+      - package: transformers
+        min_version: "4.40.0"
+        notes: must support Qwen2 architecture
+      - package: datasets
+        min_version: "2.19.0"
+      - package: accelerate
+        min_version: "0.30.0"
+      - package: peft
+        min_version: "0.11.0"
+        notes: optional; used if switching to LoRA is desired later
+      - package: trl
+        min_version: "0.8.6"
+        notes: SFTTrainer / DPOTrainer used as training backends
+      - package: bitsandbytes
+        min_version: "0.43.0"
+        notes: optional; enables 4-bit / 8-bit quantisation for large variants
+
+  - id: TR-03
+    title: supported_models
+    spec:
+      - Qwen/Qwen2-0.5B
+      - Qwen/Qwen2-1.5B
+      - Qwen/Qwen2-7B
+      - Qwen/Qwen2-7B-Instruct
+      - Qwen/Qwen2-72B-Instruct  # requires multi-GPU or quantisation
+
+  - id: TR-04
+    title: configuration
+    description: All tuneable values exposed via a single YAML config file; no magic
+      constants in source code.
+    required_fields:
+      model:
+        model_id: str
+        dtype: str                   # bfloat16 | float16 | float32
+        load_in_4bit: bool
+        load_in_8bit: bool
+      tokens:
+        num_tokens: int
+        token_prefix: str
+        init_strategy: str           # mean | random | clone_eos
+      dataset:
+        path: str
+        prompt_column: str
+        preference_label_column: str
+        chosen_column: str
+        rejected_column: str         # null if not used
+        max_length: int
+      training:
+        output_dir: str
+        num_epochs: int
+        per_device_train_batch_size: int
+        gradient_accumulation_steps: int
+        learning_rate: float
+        lr_scheduler: str
+        warmup_ratio: float
+        eval_strategy: str           # steps | epoch
+        eval_steps: int
+        save_steps: int
+        logging_steps: int
+        contrastive_loss_weight: float  # 0.0 disables contrastive term
+        seed: int
+      inference:
+        max_new_tokens: int
+        temperature: float
+        top_p: float
+        do_sample: bool
+
+  - id: TR-05
+    title: project_layout
+    spec:
+      src/:
+        train_tokens/:
+          __init__.py: ~
+          config.py: "Pydantic models for the YAML config schema"
+          tokenizer_utils.py: "FR-01 — token registration"
+          data.py: "FR-02, FR-03 — dataset loading and input construction"
+          trainer.py: "FR-04 — training loop"
+          checkpointing.py: "FR-05 — save / load artefacts"
+          inference.py: "FR-06 — inference helper"
+          cli.py: "Typer CLI entry-points: train, evaluate, generate"
+      configs/:
+        default.yaml: "Default configuration values"
+      tests/:
+        test_tokenizer_utils.py: ~
+        test_data.py: ~
+        test_trainer.py: ~
+        test_inference.py: ~
+      pyproject.toml: ~
+      README.md: ~
+
+  - id: TR-06
+    title: cli_entry_points
+    spec:
+      - command: train
+        description: Run full training pipeline from a config file
+        usage: "python -m train_tokens.cli train --config configs/default.yaml"
+      - command: evaluate
+        description: Compute eval loss and preference accuracy on a held-out split
+        usage: "python -m train_tokens.cli evaluate --config configs/default.yaml --split test"
+      - command: generate
+        description: Interactive single-prompt inference
+        usage: >
+          python -m train_tokens.cli generate
+            --config configs/default.yaml
+            --prompt "Summarise this article…"
+            --preference formal
+
+# ─── Data Requirements ────────────────────────────────────────────────────────
+data_requirements:
+
+  - id: DR-01
+    title: dataset_schema
+    description: Each example in the dataset must conform to the following schema.
+    schema:
+      prompt:
+        type: string
+        required: true
+        description: Raw user input without any special tokens
+      preference_label:
+        type: string | integer
+        required: true
+        description: >
+          Identifier for the target preference category (e.g. "formal", "concise",
+          "empathetic"). Mapped to token ids via token_config.json.
+      chosen:
+        type: string
+        required: true
+        description: The preferred model response for this prompt under the given preference
+      rejected:
+        type: string
+        required: false
+        description: A less-preferred response; used for contrastive loss when provided
+
+  - id: DR-02
+    title: dataset_size_guidelines
+    minimum_examples_per_label: 200
+    recommended_examples_per_label: 2000
+    train_eval_test_split: "90 / 5 / 5"
+
+# ─── Non-Functional Requirements ─────────────────────────────────────────────
+non_functional_requirements:
+
+  - id: NFR-01
+    title: reproducibility
+    spec: Setting seed in config must produce identical token embeddings across runs
+      on the same hardware.
+
+  - id: NFR-02
+    title: memory_efficiency
+    spec: Training the 7B model must fit on a single 40 GB GPU using bfloat16 and
+      gradient checkpointing.
+
+  - id: NFR-03
+    title: base_model_integrity
+    spec: Base model weights must be identical before and after training
+      (only new embedding rows change).
+
+  - id: NFR-04
+    title: portability
+    spec: Trained embeddings must be loadable against any future checkpoint of the
+      same Qwen2 variant without retraining.
+
+  - id: NFR-05
+    title: logging
+    spec: Training metrics (loss, grad_norm, learning_rate) must be emitted to
+      stdout and optionally to Weights & Biases via the transformers Trainer
+      report_to mechanism.
+
+# ─── Testing Requirements ─────────────────────────────────────────────────────
+testing_requirements:
+
+  - id: TEST-01
+    title: unit_tests
+    coverage_target: 80%
+    cases:
+      - token ids are contiguous after registration
+      - augmented input ids start with preference token ids
+      - save/load round-trip preserves embedding values exactly
+      - config validation rejects missing required fields
+
+  - id: TEST-02
+    title: integration_test
+    description: >
+      End-to-end smoke test using Qwen2-0.5B + a synthetic 50-example dataset;
+      must complete in < 5 minutes on CPU and produce a checkpoint.
+
+  - id: TEST-03
+    title: preference_accuracy_metric
+    description: >
+      After training, a held-out preference classifier must score responses generated
+      with the correct prefix token >= 10 percentage points higher than responses
+      generated without any prefix, on the test split.
