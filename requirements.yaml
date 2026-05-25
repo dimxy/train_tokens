@@ -181,7 +181,7 @@ technical_requirements:
         token_prefix: str
         init_strategy: str           # mean | random | clone_eos
       dataset:
-        path: str
+        paths: dict[str, str]        # split name -> local JSONL path or HF dataset id
         messages_column: str
         max_length: int
       training:

@@ -11,7 +11,10 @@ tokens:
   init_strategy: mean   # mean | random | clone_eos
 
 dataset:
-  path: data/train.jsonl
+  paths:                      # one JSONL (or HF dataset id) per split — required for honest held-out eval
+    train: data/train.jsonl
+    validation: data/validation.jsonl
+    test: data/test.jsonl
   messages_column: messages   # each row is {"messages": [{"role": ..., "content": ...}, ...]}
   max_length: 2048
 

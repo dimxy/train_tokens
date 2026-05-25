@@ -12,7 +12,7 @@ def test_from_yaml_round_trips(tmp_path):
     data = {
         "model": {"model_id": "Qwen/Qwen2-0.5B"},
         "tokens": {"num_tokens": 3},
-        "dataset": {"path": "data.jsonl"},
+        "dataset": {"paths": {"train": "data.jsonl"}},
         "training": {"output_dir": str(tmp_path)},
     }
     cfg_file = tmp_path / "cfg.yaml"
@@ -55,7 +55,7 @@ def test_defaults_are_sensible():
     cfg = AppConfig(
         model=ModelConfig(model_id="m"),
         tokens=TokensConfig(num_tokens=1),
-        dataset=DatasetConfig(path="p"),
+        dataset=DatasetConfig(paths={"train": "p"}),
     )
     assert cfg.training.seed == 42
     assert cfg.inference.do_sample is True

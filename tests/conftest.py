@@ -115,7 +115,7 @@ def app_cfg(tmp_path) -> AppConfig:
         model=ModelConfig(model_id="dummy/model"),
         tokens=TokensConfig(num_tokens=3, token_prefix=""),
         dataset=DatasetConfig(
-            path="dummy.jsonl",
+            paths={"train": "dummy.jsonl"},
             messages_column="messages",
             max_length=256,
         ),

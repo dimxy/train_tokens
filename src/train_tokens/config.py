@@ -21,7 +21,7 @@ class TokensConfig(BaseModel):
 
 
 class DatasetConfig(BaseModel):
-    path: str
+    paths: dict[str, str]
     messages_column: str = "messages"
     max_length: int = 2048
 

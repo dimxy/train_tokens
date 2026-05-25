@@ -14,9 +14,14 @@ _TOKEN_PATTERN = re.compile(r"<\|([^|<>]+)\|>")
 
 
 def load_dataset(cfg: AppConfig, split: str) -> Dataset:
-    path = cfg.dataset.path
+    if split not in cfg.dataset.paths:
+        raise ValueError(
+            f"No path configured for split '{split}'. "
+            f"Configured splits: {sorted(cfg.dataset.paths)}"
+        )
+    path = cfg.dataset.paths[split]
     if any(path.endswith(ext) for ext in (".jsonl", ".json", ".jsonlines")):
-        ds = hf_load_dataset("json", data_files={split: path}, split=split)
+        ds = hf_load_dataset("json", data_files=path, split="train")
     else:
         ds = hf_load_dataset(path, split=split)
 
