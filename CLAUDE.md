@@ -21,16 +21,16 @@ PYTHONPATH=src .venv/bin/pytest tests/test_tokenizer_utils.py -v
 # Evaluate on test split
 .venv/bin/python -m train_tokens.cli evaluate --config configs/default.yaml --split test
 
-# Generate with a trained checkpoint
+# Generate with a trained checkpoint (preference must match a label seen during training)
 .venv/bin/python -m train_tokens.cli generate \
   --config configs/default.yaml \
   --prompt "Summarise this article…" \
-  --preference formal
+  --preference humorous
 ```
 
 ## What is being built
 
-A Python application that adds learnable special tokens (`<|pref_N|>`) to a Qwen2 language model and trains only those token embeddings on a preference dataset, so they can be prepended to user prompts at inference time to steer model responses toward user-defined preferences (e.g. formal, concise, empathetic). The base model weights are never updated — this is prompt tuning over new vocabulary entries.
+A Python application that adds learnable special tokens (one per preference label, e.g. `<|humorous|>`) to a Qwen2 language model and trains only those token embeddings on a conversational preference dataset, so the label token can be embedded in a user message at inference time to steer model responses toward user-defined preferences (e.g. formal, concise, humorous). The base model weights are never updated — this is prompt tuning over new vocabulary entries.
 
 ## Planned project layout (from requirements.yaml TR-05)
 
@@ -52,7 +52,8 @@ tests/
 
 - **Approach**: prompt tuning — only the new embedding rows (shape `[num_tokens, hidden_size]`) have `requires_grad=True`; all other model parameters are frozen.
 - **Token initialisation**: new embeddings start from the mean of existing embeddings (not random).
-- **Training input shape**: `[<|pref_N|>, ...prompt_tokens..., ...chosen_response_tokens...]`; loss is computed only on response tokens. The prefix token **must** be prepended during training (not just inference) — this is the sole gradient path to the new embeddings.
+- **Dataset format**: each row is a chat transcript: `{"messages": [{"role": "system"|"user"|"assistant", "content": "..."}, ...]}`. The preference token (e.g. `<|humorous|>`) is embedded inline inside a user message; once registered as a special token it tokenises to a single id. Each conversation must end with an assistant turn — that turn is the only span the loss is computed over.
+- **Training input construction**: feed the full `messages` list through `tokenizer.apply_chat_template(..., tokenize=True)`. Mask labels to -100 for everything up to the assistant header (computed by re-applying the template to `messages[:-1]` with `add_generation_prompt=True`). The preference token **must** appear in the input during training — it is the sole gradient path to the new embeddings.
 - **Saved artefact**: `preference_embeddings.pt` + `token_config.json` only — independent of base model weights, portable across checkpoints of the same Qwen2 variant.
 - **Config**: every tuneable value lives in a single YAML file validated by Pydantic; no hardcoded constants in source.
 

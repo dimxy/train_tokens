@@ -7,19 +7,8 @@ from .config import TrainingConfig
 
 
 class PreferenceTokenTrainer(Trainer):
-    """Trainer that computes CLM loss on chosen responses with an optional
-    contrastive term that increases loss on rejected responses.
-
-    total_loss = chosen_loss - contrastive_weight * rejected_loss
-
-    Minimising this maximises the gap between how well the model predicts
-    chosen vs rejected responses given the same preference prefix token.
-    contrastive_weight=0.0 (default) reduces to standard SFT.
-    """
-
-    def __init__(self, *args, contrastive_weight: float = 0.0, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.contrastive_weight = contrastive_weight
+    """Trainer that computes the standard causal-LM loss; only the new
+    embedding rows have `requires_grad=True`, so gradients flow only there."""
 
     def compute_loss(
         self,
@@ -28,22 +17,12 @@ class PreferenceTokenTrainer(Trainer):
         return_outputs: bool = False,
         **kwargs,
     ):
-        chosen_out = model(
+        out = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             labels=inputs["labels"],
         )
-        loss = chosen_out.loss
-
-        if self.contrastive_weight > 0.0 and "rejected_input_ids" in inputs:
-            rej_out = model(
-                input_ids=inputs["rejected_input_ids"],
-                attention_mask=inputs["rejected_attention_mask"],
-                labels=inputs["rejected_labels"],
-            )
-            loss = loss - self.contrastive_weight * rej_out.loss
-
-        return (loss, chosen_out) if return_outputs else loss
+        return (out.loss, out) if return_outputs else out.loss
 
 
 def make_training_args(cfg: TrainingConfig) -> TrainingArguments:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -16,16 +16,13 @@ class ModelConfig(BaseModel):
 
 class TokensConfig(BaseModel):
     num_tokens: int = Field(gt=0)
-    token_prefix: str = "<|pref_"
+    token_prefix: str = "" # "pref_"
     init_strategy: Literal["mean", "random", "clone_eos"] = "mean"
 
 
 class DatasetConfig(BaseModel):
     path: str
-    prompt_column: str = "prompt"
-    preference_label_column: str = "preference_label"
-    chosen_column: str = "chosen"
-    rejected_column: Optional[str] = None
+    messages_column: str = "messages"
     max_length: int = 2048
 
 
@@ -41,7 +38,6 @@ class TrainingConfig(BaseModel):
     eval_steps: int = 100
     save_steps: int = 100
     logging_steps: int = 10
-    contrastive_loss_weight: float = 0.0
     seed: int = 42
     bf16: bool = True
     gradient_checkpointing: bool = True

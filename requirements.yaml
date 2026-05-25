@@ -24,7 +24,7 @@ functional_requirements:
     inputs:
       - qwen_model_id: str           # HuggingFace model identifier
       - num_tokens: int              # how many preference tokens to add
-      - token_prefix: str            # naming prefix, e.g. "<|pref_"
+      - token_prefix: str            # naming prefix, e.g. "pref_"
     outputs:
       - updated_tokenizer: object
       - model_with_expanded_vocab: object
@@ -37,46 +37,48 @@ functional_requirements:
   - id: FR-02
     title: dataset_loading
     description: >
-      Load a preference dataset that maps (user_input, preference_label) pairs to
-      preferred and rejected responses. Support HuggingFace datasets and local
-      JSONL files.
+      Load a conversational preference dataset where each example is a chat
+      transcript (list of {role, content} messages). The preference label is
+      embedded inline in a user message as a `<|label|>` token. Support
+      HuggingFace datasets and local JSONL files.
     inputs:
       - dataset_path: str            # HF dataset id or local path
       - split: str                   # train / validation / test
       - columns:
-          prompt: str                # column containing the user prompt
-          preference_label: str      # column containing the preference category id
-          chosen: str                # column containing the preferred response
-          rejected: str              # optional; column with dispreferred response
+          messages: list             # column containing the chat transcript
     outputs:
       - dataset: datasets.Dataset
     acceptance_criteria:
-      - all specified columns are present after loading
+      - the messages column is present after loading
       - dataset length > 0
-      - preference_label values map to valid token ids
+      - every embedded `<|label|>` token maps to a registered preference token id
 
   - id: FR-03
     title: input_construction
     description: >
-      For each training example, prepend the preference token(s) corresponding to
-      the example's preference_label to the user prompt before tokenization.
+      For each training example, apply the model's chat template to the
+      messages list to obtain the full input sequence. The preference token
+      appears inline inside a user message (e.g. "<|humorous|> How do I…?")
+      and tokenises to a single id once registered as a special token.
     inputs:
-      - raw_prompt: str
-      - preference_label: int | str
-      - token_mapping: dict          # label -> list[token_id]
+      - messages: list[dict]         # [{"role": ..., "content": ...}, ...]
+      - chat_template: callable      # tokenizer.apply_chat_template
+      - token_mapping: dict          # label -> token_id
     outputs:
-      - augmented_input_ids: list[int]
+      - input_ids: list[int]
+      - labels: list[int]            # -100 except over the final assistant turn
     acceptance_criteria:
-      - augmented_input_ids starts with the preference token ids
-      - original prompt tokens follow immediately after
+      - input_ids equals the chat-templated tokenisation of the full conversation
+      - labels mask everything up to (and including) the final assistant header
+      - labels are non-masked across the final assistant response tokens
       - total length does not exceed model max_position_embeddings
 
   - id: FR-04
     title: training
     description: >
-      Train only the new token embeddings using a causal language-modelling loss on
-      the chosen responses, with the base model frozen. Optionally add a contrastive
-      loss term that pushes embeddings away from rejected-response representations.
+      Train only the new token embeddings using a causal language-modelling
+      loss over the final assistant turn of each conversation, with the base
+      model frozen.
     inputs:
       - model: transformers.PreTrainedModel
       - tokenizer: transformers.PreTrainedTokenizer
@@ -180,10 +182,7 @@ technical_requirements:
         init_strategy: str           # mean | random | clone_eos
       dataset:
         path: str
-        prompt_column: str
-        preference_label_column: str
-        chosen_column: str
-        rejected_column: str         # null if not used
+        messages_column: str
         max_length: int
       training:
         output_dir: str
@@ -197,7 +196,6 @@ technical_requirements:
         eval_steps: int
         save_steps: int
         logging_steps: int
-        contrastive_loss_weight: float  # 0.0 disables contrastive term
         seed: int
       inference:
         max_new_tokens: int
@@ -250,26 +248,29 @@ data_requirements:
 
   - id: DR-01
     title: dataset_schema
-    description: Each example in the dataset must conform to the following schema.
+    description: >
+      Each example is a chat transcript. The preference label is embedded as a
+      `<|label|>` token inside a user message; the matching token is registered
+      in the tokenizer before training so it encodes to a single id.
     schema:
-      prompt:
-        type: string
-        required: true
-        description: Raw user input without any special tokens
-      preference_label:
-        type: string | integer
+      messages:
+        type: list
         required: true
         description: >
-          Identifier for the target preference category (e.g. "formal", "concise",
-          "empathetic"). Mapped to token ids via token_config.json.
-      chosen:
-        type: string
-        required: true
-        description: The preferred model response for this prompt under the given preference
-      rejected:
-        type: string
-        required: false
-        description: A less-preferred response; used for contrastive loss when provided
+          Ordered list of {role, content} dicts. Supported roles are "system",
+          "user", "assistant". The final message must be an assistant turn —
+          its tokens are the only ones that contribute to the training loss.
+        items:
+          role:
+            type: string
+            enum: [system, user, assistant]
+          content:
+            type: string
+    example:
+      messages:
+        - {role: system,    content: "You are a helpful assistant."}
+        - {role: user,      content: "<|humorous|> How do I fix a merge conflict in git?"}
+        - {role: assistant, content: "Ah, the merge conflict — git's polite way of …"}
 
   - id: DR-02
     title: dataset_size_guidelines

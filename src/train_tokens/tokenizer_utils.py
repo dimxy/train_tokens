@@ -6,8 +6,8 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from .config import TokensConfig
 
 
-def token_name(prefix: str, index: int) -> str:
-    return f"{prefix}{index}|>"
+def token_name(prefix: str, label: str) -> str:
+    return f"<|{prefix}{label}|>"
 
 
 def register_preference_tokens(
@@ -18,12 +18,13 @@ def register_preference_tokens(
 ) -> tuple[dict[str, int], int]:
     """Add one special token per label; return (label→token_id, original_vocab_size).
 
-    Labels are sorted before assignment so the mapping is deterministic regardless
-    of the order they appear in the dataset.
+    Each label becomes `<|{prefix}{label}|>` — with an empty prefix a label of
+    "humorous" registers as `<|humorous|>`. Labels are sorted before assignment
+    so the mapping is deterministic regardless of dataset order.
     """
     original_vocab_size = len(tokenizer)
     sorted_labels = sorted(labels)
-    new_tokens = [token_name(cfg.token_prefix, i) for i in range(len(sorted_labels))]
+    new_tokens = [token_name(cfg.token_prefix, label) for label in sorted_labels]
 
     tokenizer.add_special_tokens({"additional_special_tokens": new_tokens})
     model.resize_token_embeddings(len(tokenizer))

@@ -1,20 +1,18 @@
 model:
-  model_id: Qwen/Qwen2-0.5B
+  # model_id: Qwen/Qwen2-0.5B
+  model_id: Qwen/Qwen2-7B-Instruct
   dtype: bfloat16
   load_in_4bit: false
   load_in_8bit: false
 
 tokens:
-  num_tokens: 3
-  token_prefix: "<|pref_"
+  num_tokens: 1
+  token_prefix: ""   # token name is "<|{prefix}{label}|>" — empty prefix gives "<|humorous|>"
   init_strategy: mean   # mean | random | clone_eos
 
 dataset:
   path: data/train.jsonl
-  prompt_column: prompt
-  preference_label_column: preference_label
-  chosen_column: chosen
-  rejected_column: rejected   # set to null to disable contrastive loss
+  messages_column: messages   # each row is {"messages": [{"role": ..., "content": ...}, ...]}
   max_length: 2048
 
 training:
@@ -29,7 +27,6 @@ training:
   eval_steps: 100
   save_steps: 100
   logging_steps: 10
-  contrastive_loss_weight: 0.0   # 0.0 disables the contrastive term
   seed: 42
   bf16: true
   gradient_checkpointing: true

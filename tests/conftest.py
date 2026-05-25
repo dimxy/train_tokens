@@ -38,7 +38,8 @@ class FakeModel:
 
 
 class FakeTokenizer:
-    """Minimal tokenizer stub."""
+    """Minimal tokenizer stub with a deterministic character-level encoder
+    and a stand-in chat template (`<role>content</role>` per turn)."""
 
     def __init__(self, vocab_size: int = 50) -> None:
         self._base_vocab_size = vocab_size
@@ -47,6 +48,7 @@ class FakeTokenizer:
         self.eos_token = "</s>"
         self.pad_token_id = 0
         self.pad_token = "<pad>"
+        self.chat_template = "fake-template"
 
     def __len__(self) -> int:
         return self._base_vocab_size + len(self._extra)
@@ -56,12 +58,34 @@ class FakeTokenizer:
         self._extra.extend(new)
         return len(new)
 
+    def convert_ids_to_tokens(self, token_id: int) -> str:
+        idx = token_id - self._base_vocab_size
+        return self._extra[idx]
+
     def __call__(self, text: str, add_special_tokens: bool = True):
-        # Deterministic fake encoding: one token per character, ids in [2, 49]
-        ids = [(ord(c) % 48) + 2 for c in text[:16]]
+        ids = [(ord(c) % 48) + 2 for c in text]
         return type("Enc", (), {"input_ids": ids})()
 
-    def decode(self, token_ids: list[int], skip_special_tokens: bool = True) -> str:
+    def apply_chat_template(
+        self,
+        messages: list[dict],
+        tokenize: bool = False,
+        add_generation_prompt: bool = False,
+        return_tensors: str | None = None,
+    ):
+        parts = [f"<{m['role']}>{m['content']}</{m['role']}>" for m in messages]
+        if add_generation_prompt:
+            parts.append("<assistant>")
+        text = "".join(parts)
+        if not tokenize:
+            return text
+        ids = self(text, add_special_tokens=False).input_ids
+        if return_tensors == "pt":
+            import torch
+            return torch.tensor([ids], dtype=torch.long)
+        return ids
+
+    def decode(self, token_ids, skip_special_tokens: bool = True) -> str:
         return f"decoded:{list(token_ids)}"
 
     def save_pretrained(self, path: str) -> None:
@@ -82,21 +106,18 @@ def fake_tokenizer() -> FakeTokenizer:
 
 @pytest.fixture
 def tokens_cfg() -> TokensConfig:
-    return TokensConfig(num_tokens=3, token_prefix="<|pref_", init_strategy="mean")
+    return TokensConfig(num_tokens=3, token_prefix="", init_strategy="mean")
 
 
 @pytest.fixture
 def app_cfg(tmp_path) -> AppConfig:
     return AppConfig(
         model=ModelConfig(model_id="dummy/model"),
-        tokens=TokensConfig(num_tokens=3, token_prefix="<|pref_"),
+        tokens=TokensConfig(num_tokens=3, token_prefix=""),
         dataset=DatasetConfig(
             path="dummy.jsonl",
-            prompt_column="prompt",
-            preference_label_column="preference_label",
-            chosen_column="chosen",
-            rejected_column=None,
-            max_length=64,
+            messages_column="messages",
+            max_length=256,
         ),
         training=TrainingConfig(output_dir=str(tmp_path / "out")),
         inference=InferenceConfig(),

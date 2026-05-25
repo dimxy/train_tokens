@@ -39,7 +39,7 @@ def test_mean_init_matches_existing_mean(fake_model, fake_tokenizer):
     original_size = len(fake_tokenizer)
     original_mean = fake_model.get_input_embeddings().weight.data[:original_size].mean(dim=0)
 
-    cfg = TokensConfig(num_tokens=1, token_prefix="<|pref_", init_strategy="mean")
+    cfg = TokensConfig(num_tokens=1, token_prefix="", init_strategy="mean")
     register_preference_tokens(fake_model, fake_tokenizer, ["x"], cfg)
 
     new_row = fake_model.get_input_embeddings().weight.data[original_size]

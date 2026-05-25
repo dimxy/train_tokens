@@ -18,6 +18,34 @@ def _dtype(name: str):
     return {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[name]
 
 
+def _sanity_print_example(processed, tokenizer, label_to_token_id: dict[str, int]) -> None:
+    """Print the head/tail of the first processed example so type and content
+    issues (e.g. string-typed input_ids, missing preference token) surface
+    before the trainer starts."""
+    sample = processed[0]
+    ids, labs = sample["input_ids"], sample["labels"]
+    pref_ids = set(label_to_token_id.values())
+    typer.echo(
+        f"[sanity] first example — input_ids type={type(ids).__name__}, "
+        f"len={len(ids)}, head={list(ids[:10])}"
+    )
+    if not (ids and isinstance(ids[0], int)):
+        raise ValueError(
+            f"Expected input_ids of int; got {type(ids).__name__} of "
+            f"{type(ids[0]).__name__ if ids else 'empty'}. "
+            "This usually means apply_chat_template returned a string — "
+            "check that the tokenizer has a chat_template set."
+        )
+    if not pref_ids.intersection(ids):
+        raise ValueError(
+            f"No preference token id from {sorted(pref_ids)} found in the first "
+            "example's input_ids. The token must appear in the input or "
+            "training will not update the new embeddings."
+        )
+    n_supervised = sum(1 for l in labs if l != -100)
+    typer.echo(f"[sanity] supervised tokens in first example: {n_supervised}/{len(labs)}")
+
+
 def _load_model_and_tokenizer(cfg):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -55,7 +83,7 @@ def train(config: Path = typer.Option(..., "--config", "-c", help="Path to YAML 
     model, tokenizer = _load_model_and_tokenizer(cfg)
 
     train_ds = load_dataset(cfg, "train")
-    labels = discover_labels(train_ds, cfg.dataset.preference_label_column)
+    labels = discover_labels(train_ds, cfg.dataset.messages_column)
 
     if len(labels) != cfg.tokens.num_tokens:
         typer.echo(
@@ -70,6 +98,7 @@ def train(config: Path = typer.Option(..., "--config", "-c", help="Path to YAML 
     setup_gradient_masking(model, original_vocab_size)
 
     train_processed = build_processed_dataset(train_ds, tokenizer, label_to_token_id, cfg)
+    _sanity_print_example(train_processed, tokenizer, label_to_token_id)
 
     try:
         eval_ds = load_dataset(cfg, "validation")
@@ -78,11 +107,7 @@ def train(config: Path = typer.Option(..., "--config", "-c", help="Path to YAML 
         n = min(50, len(train_processed))
         eval_processed = train_processed.select(range(n))
 
-    has_rejected = (
-        cfg.dataset.rejected_column is not None
-        and "rejected_input_ids" in train_processed.column_names
-    )
-    collator = PreferenceCollator(tokenizer=tokenizer, has_rejected=has_rejected)
+    collator = PreferenceCollator(tokenizer=tokenizer)
 
     trainer = PreferenceTokenTrainer(
         model=model,
@@ -90,7 +115,6 @@ def train(config: Path = typer.Option(..., "--config", "-c", help="Path to YAML 
         train_dataset=train_processed,
         eval_dataset=eval_processed,
         data_collator=collator,
-        contrastive_weight=cfg.training.contrastive_loss_weight,
     )
     trainer.train()
 
@@ -128,11 +152,7 @@ def evaluate(
     ds = load_dataset(cfg, split)
     processed = build_processed_dataset(ds, tokenizer, label_to_token_id, cfg)
 
-    has_rejected = (
-        cfg.dataset.rejected_column is not None
-        and "rejected_input_ids" in processed.column_names
-    )
-    collator = PreferenceCollator(tokenizer=tokenizer, has_rejected=has_rejected)
+    collator = PreferenceCollator(tokenizer=tokenizer)
 
     trainer = PreferenceTokenTrainer(
         model=model,

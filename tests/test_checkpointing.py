@@ -15,7 +15,7 @@ LABELS = ["concise", "formal"]
 
 @pytest.fixture
 def trained_model_and_mapping(fake_model, fake_tokenizer):
-    cfg = TokensConfig(num_tokens=2, token_prefix="<|pref_", init_strategy="mean")
+    cfg = TokensConfig(num_tokens=2, token_prefix="", init_strategy="mean")
     label_to_token_id, original_vocab_size = register_preference_tokens(
         fake_model, fake_tokenizer, LABELS, cfg
     )
