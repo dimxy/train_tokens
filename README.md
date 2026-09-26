@@ -1,0 +1,1 @@
+A Python application that adds learnable special tokens (one per preference label, e.g. <|humorous|>) to a Qwen2 language model and trains only those token embeddings on a conversational preference dataset, so the label token can be embedded in a user message at inference time to steer model responses toward user-defined preferences (e.g. formal, concise, humorous). 
